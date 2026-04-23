@@ -53,7 +53,15 @@ def affine_backward(dout, cache):
     ###########################################################################
     # TODO:  Реализуйте обратный проход полносвязного слоя.         
     ###########################################################################
+
+    x_reshaped = x.reshape(x.shape[0], -1)
     
+    dx = dout @ w.T
+    dw = x_reshaped.T @ dout
+    db = np.sum(dout, axis=0)
+
+    dx = dx.reshape(x.shape)
+
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -74,7 +82,9 @@ def relu_forward(x):
     ###########################################################################
     # TODO: Реализуйте RELU на прямом проходе.                                  #
     ###########################################################################
-    out = np.maximum(0, x)
+
+    out = x * (x > 0)
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -95,7 +105,11 @@ def relu_backward(dout, cache):
     ###########################################################################
     # TODO: Реализуйте RELU на обраьном проходе
     ###########################################################################
-    #
+
+    mask = np.ones(x.shape) * (x > 0)
+
+    dx = dout * mask
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -117,11 +131,27 @@ def softmax_loss(x, y):
     ###########################################################################
     # YOUR CODE
     ###########################################################################
+
+    N = x.shape[0]
+
+    x_max = np.max(x, axis=1)[:, np.newaxis]
+    shifted_x = x - x_max
+
+    log_sum_exp = np.log(np.sum(np.exp(shifted_x), axis=1)[:, np.newaxis])
+    log_probs = shifted_x - log_sum_exp
+    loss = -np.sum(log_probs[np.arange(N), y]) / N
+
+    mask = np.zeros(x.shape)
+    mask[np.arange(N), y] = 1
+
+    probabilities = np.exp(log_probs)
+    dx = (probabilities - mask) / N
     
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
     return loss, dx
+
 
 def batchnorm_forward(x, gamma, beta, bn_param):
     """Прямой проход для batch-нормализации.
@@ -412,6 +442,41 @@ def conv_forward_naive(x, w, b, conv_param):
     # TODO: Напишите реализацию свертки прямого прохода.                         #
     # Hint: можно использовать np.pad для паддинга.                      #
     ###########################################################################
+    pad = conv_param["pad"]
+    stride = conv_param["stride"]
+
+    full_pad = ((0, 0), (0, 0), (pad, pad), (pad, pad))
+    x_pad = np.pad(x, full_pad)
+
+    N, C, H, W = x_pad.shape
+    F, C, HH, WW = w.shape
+
+    H1 = 1 + (H - HH) // stride
+    W1 = 1 + (W - WW) // stride
+
+    out = np.zeros(shape=(N, F, H1, W1))
+
+    # for f in range(F):
+    #     for i in range(H1):
+    #         for j in range(W1):
+    #             h_start = i * stride
+    #             h_end = h_start + HH
+    #             w_start = j * stride
+    #             w_end = w_start + WW
+
+    #             window = x_pad[:, :, h_start:h_end, w_start:w_end]
+
+    #             out[:, f, i, j] = np.sum(window * w[f], axis=(1,2,3)) + b[f]
+
+    for i in range(HH):
+        for j in range(WW):
+            x_slice = x_pad[:, :, i:i + H1 * stride:stride, j:j + W1 * stride:stride]
+
+            for f in range(F):
+                weights = w[f, :, i, j].reshape(1, C, 1, 1)
+                out[:, f, :, :] += np.sum(x_slice * weights, axis=1)
+
+    out += b.reshape(1, F, 1, 1)
     
     ###########################################################################
     #                             END OF YOUR CODE                            #
@@ -435,6 +500,52 @@ def conv_backward_naive(dout, cache):
     ###########################################################################
     # TODO: Реализация светки обратного прохода.                        #
     ###########################################################################
+
+    x, w, b, conv_param = cache
+
+    pad = conv_param["pad"]
+    stride = conv_param["stride"]
+
+    full_pad = ((0, 0), (0, 0), (pad, pad), (pad, pad))
+    x_pad = np.pad(x, full_pad)
+
+    N, C, H, W = x_pad.shape
+    F, C, HH, WW = w.shape
+    _, _, H1, W1 = dout.shape
+
+    db = np.zeros(shape=(F,))
+    dw = np.zeros(shape=(F, C, HH, WW))
+    dx = np.zeros(shape=(N, C, H, W))
+
+    # for f in range(F):
+    #     for i in range(H1):
+    #         for j in range(W1):
+    #             h_start = i * stride
+    #             h_end = h_start + HH
+    #             w_start = j * stride
+    #             w_end = w_start + WW
+
+    #             dout_vec = dout[:, f, i, j][:, np.newaxis, np.newaxis, np.newaxis]
+
+    #             window = x_pad[:, :, h_start:h_end, w_start:w_end]
+
+    #             dw[f] += np.sum(window * dout_vec, axis=0)
+    #             dx[:, :, h_start:h_end, w_start:w_end] += w[f] * dout_vec
+    #             db[f] += np.sum(dout[:, f, i, j])
+
+    for i in range(HH):
+        for j in range(WW):
+            x_slice = x_pad[:, :, i: i + H1 * stride:stride, j: j + W1 * stride:stride]
+
+            for f in range(F):
+                dout_f = dout[:, f, :, :].reshape(N, 1, H1, W1)
+                dw[f, :, i, j] = np.sum(dout_f * x_slice, axis=(0, 2, 3))
+
+                w_c = w[f, :, i, j].reshape(1, C, 1, 1)
+                dx[:, :, i: i + H1 * stride:stride, j: j + W1 * stride:stride] += dout_f * w_c
+
+    dx = dx[:, :, pad:H-pad, pad:W-pad]
+    db = np.sum(dout, axis=(0, 2, 3))
     
     ###########################################################################
     #                             END OF YOUR CODE                            #
@@ -466,6 +577,33 @@ def max_pool_forward_naive(x, pool_param):
     ###########################################################################
     # TODO: Implement the max-pooling forward pass                            #
     ###########################################################################
+
+    N, C, H, W = x.shape
+
+    pool_height = pool_param["pool_height"]
+    pool_width = pool_param["pool_width"]
+    stride = pool_param["stride"]
+
+    H_OUT = 1 + (H - pool_height) // stride
+    W_OUT = 1 + (W - pool_width) // stride
+
+    out = np.full((N, C, H_OUT, W_OUT), -np.inf)
+
+    # for c in range(C):
+    #     for i in range(H_OUT):
+    #         for j in range(W_OUT):
+    #             h_start = i * stride
+    #             h_end = h_start + pool_height
+    #             w_start = j * stride
+    #             w_end = w_start + pool_width
+
+    #             out[:, c, i, j] = np.max(x[:, c, h_start:h_end, w_start:w_end], axis=(1,2))
+
+    for i in range(pool_height):
+        for j in range(pool_width):
+            x_slice = x[:, :, i: i + H_OUT * stride:stride, j: j + W_OUT * stride:stride]
+
+            out = np.maximum(out, x_slice)
     
     ###########################################################################
     #                             END OF YOUR CODE                            #
@@ -489,6 +627,55 @@ def max_pool_backward_naive(dout, cache):
     ###########################################################################
     # TODO: Implement the max-pooling backward pass                           #
     ###########################################################################
+
+    x, pool_param = cache
+
+    N, C, H, W = x.shape
+
+    pool_height = pool_param["pool_height"]
+    pool_width = pool_param["pool_width"]
+    stride = pool_param["stride"]
+
+    H_OUT = 1 + (H - pool_height) // stride
+    W_OUT = 1 + (W - pool_width) // stride
+
+    dx = np.zeros(shape=(N, C, H, W))
+
+    # for c in range(C):
+    #     for i in range(H_OUT):
+    #         for j in range(W_OUT):
+    #             h_start = i * stride
+    #             h_end = h_start + pool_height
+    #             w_start = j * stride
+    #             w_end = w_start + pool_width
+
+    #             window = x[:, c, h_start:h_end, w_start:w_end]
+
+    #             window_flat = window.reshape(N, -1) 
+    #             idx_max = np.argmax(window_flat, axis=1)
+    #             rows = np.arange(N)
+    #             h_idx, w_idx = np.unravel_index(idx_max, (pool_height, pool_width))
+
+    #             dx[rows, c, h_start + h_idx, w_start + w_idx] += dout[rows, c, i, j]
+
+    H_OUT = 1 + (H - pool_height) // stride
+    W_OUT = 1 + (W - pool_width) // stride
+
+    out = np.full((N, C, H_OUT, W_OUT), -np.inf)
+
+    for i in range(pool_height):
+        for j in range(pool_width):
+            x_slice = x[:, :, i: i + H_OUT * stride:stride, j: j + W_OUT * stride:stride]
+
+            out = np.maximum(out, x_slice)
+
+    for i in range(pool_height):
+        for j in range(pool_width):
+            x_slice = x[:, :, i: i + H_OUT * stride:stride, j: j + W_OUT * stride:stride]
+
+            mask = (x_slice == out)
+
+            dx[:, :, i: i + H_OUT * stride:stride, j: j + W_OUT * stride:stride] += mask * dout
     
     ###########################################################################
     #                             END OF YOUR CODE                            #

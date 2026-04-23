@@ -44,8 +44,8 @@ class ThreeLayerConvNet(object):
         self.dtype = dtype
 
         ############################################################################
-        # TODO: Инициализируйте веса и смещения для трехслойной сверточной сети
-        # сети. Веса должны быть инициализированы гауссовым распределением с центром в 0,0
+        # TODO: Инициализируйте веса и смещения для трехслойной сверточной сети.
+        # Веса должны быть инициализированы гауссовым распределением с центром в 0,0
         # со стандартным отклонением, равным weight_scale; смещения должны быть
         # инициализированы нулем. Все веса и смещения должны храниться в
         # словаре self.params. Сохраняйте веса и смещения для сверточного
@@ -59,8 +59,18 @@ class ThreeLayerConvNet(object):
         # начало функции loss() #
         ############################################################################
         F, (C, H, W) = num_filters, input_dim # dim size
-        self.params.update({ #...
-                            })
+        W1 = np.random.normal(0.0, weight_scale, size=(F, C, filter_size, filter_size))
+        b1 = np.zeros(shape=(F,))
+
+        H_pulled = H // 2
+        W_pulled = W // 2
+
+        W2 = np.random.normal(0.0, weight_scale, size=(F * H_pulled * W_pulled, hidden_dim))
+        b2 = np.zeros(shape=(hidden_dim,))
+
+        W3 = np.random.normal(0.0, weight_scale, size=(hidden_dim, num_classes))
+        b3 = np.zeros(shape=(num_classes))
+        self.params.update({ "W1": W1, "b1": b1, "W2": W2, "b2": b2, "W3": W3, "b3": b3})
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -92,10 +102,16 @@ class ThreeLayerConvNet(object):
         # вычисляя оценки классов для X и сохраняя их в переменной scores #
         #
         # #
-        # вы можете использовать функции, определенные в classifiesr/layers.py и #
+        # вы можете использовать функции, определенные в classifiers/layers.py и #
         # classifiers/layer_utils.py. #
         ############################################################################
-        # 
+        
+        out_first_layer, cache_first_layer = conv_relu_pool_forward(X, self.params["W1"], self.params["b1"], conv_param, pool_param)
+        out_second_layer, cache_second_layer = affine_relu_forward(out_first_layer, self.params["W2"], self.params["b2"])
+        out_third_layer, cache_third_layer = affine_forward(out_second_layer, self.params["W3"], self.params["b3"])
+
+        scores = out_third_layer
+
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -113,9 +129,23 @@ class ThreeLayerConvNet(object):
         # ПРИМЕЧАНИЕ:  L2-регуляризация включает множитель #
         # равный 0,5 для упрощения выражения для градиента. #
         ############################################################################
-        # loss, dout = softmax_loss(scores, y)                                     # loss and dout
-        # loss += 0.5 * self.reg * (np.sum(W1**2) + np.sum(W2**2) + np.sum(W3**2)) # regularized loss
-        # ...
+        loss, dout = softmax_loss(scores, y)                                     # loss and dout
+        loss += 0.5 * self.reg * (np.sum(W1**2) + np.sum(W2**2) + np.sum(W3**2)) # regularized loss
+        
+        dx3, dw3, db3 = affine_backward(dout, cache_third_layer)
+        dx2, dw2, db2 = affine_relu_backward(dx3, cache_second_layer)
+        dx1, dw1, db1 = conv_relu_pool_backward(dx2, cache_first_layer)
+
+        dw3 += self.reg * W3
+        dw2 += self.reg * W2
+        dw1 += self.reg * W1
+
+        grads["W1"] = dw1
+        grads["b1"] = db1
+        grads["W2"] = dw2
+        grads["b2"] = db2
+        grads["W3"] = dw3
+        grads["b3"] = db3
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
